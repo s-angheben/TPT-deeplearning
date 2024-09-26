@@ -34,9 +34,9 @@ def test_time_tuning(model, inputs, optimizer, tta_step=1, selection_p=0.1):
         output = select_confident_samples(output, selection_p)
         loss = avg_entropy(output)
 
-        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        optimizer.zero_grad()
 
     return
 
@@ -65,7 +65,6 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
         with torch.no_grad():
             output = model(orig_img)
 
-        print(output)
         _, predicted = output.max(1)
         cumulative_accuracy += predicted.eq(target).sum().item()
         print(cumulative_accuracy)
@@ -74,7 +73,7 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
 
 
 def get_optimizer(model, lr, wd, momentum):
-    optimizer = torch.optim.AdamW(
+    optimizer = torch.optim.SGD(
         [{"params": model.parameters()}], lr=lr, weight_decay=wd, momentum=momentum
     )
 
@@ -112,7 +111,8 @@ def main(
     model = model.to(device)
 
     trainable_param = model.prompt_learner.parameters()
-    optimizer = torch.optim.AdamW(trainable_param, learning_rate)
+    # optimizer = torch.optim.AdamW(trainable_param, learning_rate)
+    optimizer = get_optimizer(model, learning_rate, weight_decay, momentum)
     optim_state = deepcopy(optimizer.state_dict())
 
     cudnn.benchmark = True
