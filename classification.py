@@ -51,7 +51,8 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
 
     print("Test Time Evaluation")
 
-    for i, (imgs, target) in tqdm(enumerate(dataloader), total=len(dataloader)):
+    # for i, (imgs, target) in tqdm(enumerate(dataloader), total=len(dataloader)):
+    for i, (imgs, target) in tqdm(enumerate(dataloader), total=500):
         images = torch.cat(imgs, dim=0).to(device)
         # images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider original image
         orig_img = imgs[0].to(device)
@@ -68,6 +69,10 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
 
         _, predicted = output.max(1)
         cumulative_accuracy += predicted.eq(target).sum().item()
+        samples += 1
+
+        if i == 500:
+            break
 
     return cumulative_accuracy / samples * 100
 
@@ -75,6 +80,14 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
 def get_optimizer(model, lr, wd, momentum):
     optimizer = torch.optim.SGD(
         [{"params": model.parameters()}], lr=lr, weight_decay=wd, momentum=momentum
+    )
+
+    return optimizer
+
+
+def get_optimizer2(model, lr, wd, momentum):
+    optimizer = torch.optim.AdamW(
+        [{"params": model.parameters()}], lr=lr, weight_decay=wd
     )
 
     return optimizer
@@ -116,7 +129,7 @@ def main(
 
     trainable_param = model.prompt_learner.parameters()
     # optimizer = torch.optim.AdamW(trainable_param, learning_rate)
-    optimizer = get_optimizer(model, learning_rate, weight_decay, momentum)
+    optimizer = get_optimizer2(model, learning_rate, weight_decay, momentum)
     optim_state = deepcopy(optimizer.state_dict())
 
     cudnn.benchmark = True
