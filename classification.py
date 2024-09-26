@@ -83,6 +83,7 @@ def get_optimizer(model, lr, wd, momentum):
 def main(
     ImageNetA_path="../Datasets/imagenet-a/",
     coop_weight_path="../model.pth.tar-50",
+    n_aug=64 - 1,
     batch_size=1,
     arch="RN50",
     device="cuda:0",
@@ -96,7 +97,7 @@ def main(
 ):
     classnames = ImageNetA.classnames
 
-    augmenter = Augmenter()
+    augmenter = Augmenter(n_aug=n_aug)
     dataset = ImageNetA(ImageNetA_path, transform=augmenter)
     dataloader = get_dataloader(dataset, batch_size)
 
