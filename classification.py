@@ -51,8 +51,9 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
 
     print("Test Time Evaluation")
 
-    for i, (imgs, target) in tqdm(enumerate(dataloader)):
-        images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider original image
+    for i, (imgs, target) in tqdm(enumerate(dataloader), total=len(dataloader)):
+        images = torch.cat(imgs, dim=0).to(device)
+        # images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider original image
         orig_img = imgs[0].to(device)
         target = target.to(device)
 
@@ -67,7 +68,6 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
 
         _, predicted = output.max(1)
         cumulative_accuracy += predicted.eq(target).sum().item()
-        print(cumulative_accuracy)
 
     return cumulative_accuracy / samples * 100
 
@@ -82,15 +82,13 @@ def get_optimizer(model, lr, wd, momentum):
 
 def main(
     ImageNetA_path="../Datasets/imagenet-a/",
+    coop_weight_path="../model.pth.tar-50",
     batch_size=1,
     arch="RN50",
-    num_classes=10,
     device="cuda:0",
     learning_rate=0.002,
     weight_decay=0.0005,
     momentum=0.9,
-    epochs=2,
-    run_name="exp1",
     n_ctx=4,
     ctx_init="",
     class_token_position="end",
@@ -103,6 +101,11 @@ def main(
     dataloader = get_dataloader(dataset, batch_size)
 
     model = get_coop(arch, classnames, device, n_ctx, ctx_init)
+    print("Use pre-trained soft prompt (CoOp) as initialization")
+    pretrained_ctx = torch.load(coop_weight_path)["state_dict"]["ctx"]
+    with torch.no_grad():
+        model.prompt_learner.ctx.copy_(pretrained_ctx)
+        model.prompt_learner.ctx_init_state = pretrained_ctx
 
     for name, param in model.named_parameters():
         if "prompt_learner" not in name:
