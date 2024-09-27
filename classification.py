@@ -40,19 +40,29 @@ def test_time_tuning(model, inputs, optimizer, tta_step=1, selection_p=0.1):
 
     return
 
+def compute_statistics(statistics):
+    for i in range(200):
+        if statistics[i]["n_samples"] != 0:
+            statistics[i]["tpt_improved_samples"] /= statistics[i]["n_samples"]
+            statistics[i]["tpt_worsened_samples"] /= statistics[i]["n_samples"]
+            print(f"Class {i}: Improved {statistics[i]['tpt_improved_samples']:.2f}, Worsened {statistics[i]['tpt_worsened_samples']:.2f}, Samples {statistics[i]['n_samples']}")
+     
 
 def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
     samples = 0.0
-    cumulative_accuracy = 0.0
-
+    cumulative_accuracy_base = 0.0
+    cumulative_accuracy_tpt = 0.0
     model.eval()
     with torch.no_grad():
         model.reset()
 
     print("Test Time Evaluation")
 
+    statistics = [{"tpt_improved_samples": 0, "tpt_worsened_samples": 0, "n_samples": 0} for _ in range(200)]
+
+    progress_bar = tqdm(enumerate(dataloader), total=500)
     # for i, (imgs, target) in tqdm(enumerate(dataloader), total=len(dataloader)):
-    for i, (imgs, target) in tqdm(enumerate(dataloader), total=500):
+    for i, (imgs, target) in progress_bar:
         images = torch.cat(imgs, dim=0).to(device)
         # images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider original image
         orig_img = imgs[0].to(device)
@@ -62,19 +72,33 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
             model.reset()
         optimizer.load_state_dict(optim_state)
 
+        _, predicted_base = model(orig_img).max(1)
+
         test_time_tuning(model, images, optimizer)
 
         with torch.no_grad():
             output = model(orig_img)
 
-        _, predicted = output.max(1)
-        cumulative_accuracy += predicted.eq(target).sum().item()
+        _, predicted_tpt = output.max(1)
+
+        cumulative_accuracy_base += predicted_base.eq(target).sum().item()
+        cumulative_accuracy_tpt += predicted_tpt.eq(target).sum().item()
         samples += 1
+
+        statistics[target]["tpt_improved_samples"] += 1 if predicted_base.eq(predicted_tpt).sum().item() != 1 and predicted_tpt.eq(target).sum().item() == 1 else 0
+        statistics[target]["tpt_worsened_samples"] += 1 if predicted_base.eq(predicted_tpt).sum().item() != 1 and predicted_base.eq(target).sum().item() == 1 else 0
+        statistics[target]["n_samples"] += 1
+
+        progress_bar.set_postfix({
+            'Base Acc': f"{(cumulative_accuracy_base / samples) * 100:.2f}%",
+            'TPT Acc': f"{cumulative_accuracy_tpt / samples * 100:.2f}%"
+        })
 
         if i == 500:
             break
 
-    return cumulative_accuracy / samples * 100
+    compute_statistics(statistics)
+    return cumulative_accuracy_tpt / samples * 100
 
 
 def get_optimizer(model, lr, wd, momentum):
@@ -100,7 +124,7 @@ def main(
     batch_size=1,
     arch="RN50",
     device="cuda:0",
-    learning_rate=0.002,
+    learning_rate=0.03,
     weight_decay=0.0005,
     momentum=0.9,
     n_ctx=4,
@@ -129,7 +153,7 @@ def main(
 
     trainable_param = model.prompt_learner.parameters()
     # optimizer = torch.optim.AdamW(trainable_param, learning_rate)
-    optimizer = get_optimizer2(model, learning_rate, weight_decay, momentum)
+    optimizer = get_optimizer(model, learning_rate, weight_decay, momentum)
     optim_state = deepcopy(optimizer.state_dict())
 
     cudnn.benchmark = True
