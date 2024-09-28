@@ -1,6 +1,8 @@
-from data.dataloader import *
+from data.dataloader import ImageNetA, get_dataloader
+from data.datautils import Augmenter
 from model.custom_clip import get_coop
-from data.datautils import *
+from utils.utils import set_random_seed
+
 import torch.backends.cudnn as cudnn
 import torch
 import numpy as np
@@ -40,13 +42,16 @@ def test_time_tuning(model, inputs, optimizer, tta_step=1, selection_p=0.1):
 
     return
 
+
 def compute_statistics(statistics):
     for i in range(200):
         if statistics[i]["n_samples"] != 0:
             statistics[i]["tpt_improved_samples"] /= statistics[i]["n_samples"]
             statistics[i]["tpt_worsened_samples"] /= statistics[i]["n_samples"]
-            print(f"Class {i}: Improved {statistics[i]['tpt_improved_samples']:.2f}, Worsened {statistics[i]['tpt_worsened_samples']:.2f}, Samples {statistics[i]['n_samples']}")
-     
+            print(
+                f"Class {i}: Improved {statistics[i]['tpt_improved_samples']:.2f}, Worsened {statistics[i]['tpt_worsened_samples']:.2f}, Samples {statistics[i]['n_samples']}"
+            )
+
 
 def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
     samples = 0.0
@@ -58,10 +63,12 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
 
     print("Test Time Evaluation")
 
-    statistics = [{"tpt_improved_samples": 0, "tpt_worsened_samples": 0, "n_samples": 0} for _ in range(200)]
+    statistics = [
+        {"tpt_improved_samples": 0, "tpt_worsened_samples": 0, "n_samples": 0}
+        for _ in range(200)
+    ]
 
-    progress_bar = tqdm(enumerate(dataloader), total=500)
-    # for i, (imgs, target) in tqdm(enumerate(dataloader), total=len(dataloader)):
+    progress_bar = tqdm(enumerate(dataloader), total=len(dataloader))
     for i, (imgs, target) in progress_bar:
         images = torch.cat(imgs, dim=0).to(device)
         # images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider original image
@@ -85,17 +92,26 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
         cumulative_accuracy_tpt += predicted_tpt.eq(target).sum().item()
         samples += 1
 
-        statistics[target]["tpt_improved_samples"] += 1 if predicted_base.eq(predicted_tpt).sum().item() != 1 and predicted_tpt.eq(target).sum().item() == 1 else 0
-        statistics[target]["tpt_worsened_samples"] += 1 if predicted_base.eq(predicted_tpt).sum().item() != 1 and predicted_base.eq(target).sum().item() == 1 else 0
+        statistics[target]["tpt_improved_samples"] += (
+            1
+            if predicted_base.eq(predicted_tpt).sum().item() != 1
+            and predicted_tpt.eq(target).sum().item() == 1
+            else 0
+        )
+        statistics[target]["tpt_worsened_samples"] += (
+            1
+            if predicted_base.eq(predicted_tpt).sum().item() != 1
+            and predicted_base.eq(target).sum().item() == 1
+            else 0
+        )
         statistics[target]["n_samples"] += 1
 
-        progress_bar.set_postfix({
-            'Base Acc': f"{(cumulative_accuracy_base / samples) * 100:.2f}%",
-            'TPT Acc': f"{cumulative_accuracy_tpt / samples * 100:.2f}%"
-        })
-
-        if i == 500:
-            break
+        progress_bar.set_postfix(
+            {
+                "Base Acc": f"{(cumulative_accuracy_base / samples) * 100:.2f}%",
+                "TPT Acc": f"{cumulative_accuracy_tpt / samples * 100:.2f}%",
+            }
+        )
 
     compute_statistics(statistics)
     return cumulative_accuracy_tpt / samples * 100
@@ -104,14 +120,6 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
 def get_optimizer(model, lr, wd, momentum):
     optimizer = torch.optim.SGD(
         [{"params": model.parameters()}], lr=lr, weight_decay=wd, momentum=momentum
-    )
-
-    return optimizer
-
-
-def get_optimizer2(model, lr, wd, momentum):
-    optimizer = torch.optim.AdamW(
-        [{"params": model.parameters()}], lr=lr, weight_decay=wd
     )
 
     return optimizer
@@ -132,11 +140,13 @@ def main(
     class_token_position="end",
     csc=False,
 ):
+    set_random_seed(1234)
+
     classnames = ImageNetA.classnames
 
     augmenter = Augmenter(n_aug=n_aug)
     dataset = ImageNetA(ImageNetA_path, transform=augmenter)
-    dataloader = get_dataloader(dataset, batch_size)
+    dataloader = get_dataloader(dataset, batch_size, shuffle=True, reduced_size=500)
 
     model = get_coop(arch, classnames, device, n_ctx, ctx_init)
     print("Use pre-trained soft prompt (CoOp) as initialization")
@@ -151,8 +161,7 @@ def main(
 
     model = model.to(device)
 
-    trainable_param = model.prompt_learner.parameters()
-    # optimizer = torch.optim.AdamW(trainable_param, learning_rate)
+    # trainable_param = model.prompt_learner.parameters()
     optimizer = get_optimizer(model, learning_rate, weight_decay, momentum)
     optim_state = deepcopy(optimizer.state_dict())
 
