@@ -8,6 +8,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
+from torch.utils.tensorboard import SummaryWriter
 
 
 def select_confident_samples(logits, top):
@@ -53,7 +54,7 @@ def compute_statistics(statistics):
             )
 
 
-def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
+def test_time_adapt_eval(dataloader, model, optimizer, optim_state, writer, device):
     samples = 0.0
     cumulative_accuracy_base = 0.0
     cumulative_accuracy_tpt = 0.0
@@ -79,37 +80,52 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, device):
             model.reset()
         optimizer.load_state_dict(optim_state)
 
-        _, predicted_base = model(orig_img).max(1)
+        with torch.no_grad():
+            output = model(orig_img)
+        pred_base_conf, pred_base_class = torch.softmax(output, dim=1).max(1)
 
         test_time_tuning(model, images, optimizer)
 
         with torch.no_grad():
             output = model(orig_img)
+        pred_tpt_conf, pred_tpt_class = torch.softmax(output, dim=1).max(1)
 
-        _, predicted_tpt = output.max(1)
-
-        cumulative_accuracy_base += predicted_base.eq(target).sum().item()
-        cumulative_accuracy_tpt += predicted_tpt.eq(target).sum().item()
+        cumulative_accuracy_base += pred_base_class.eq(target).sum().item()
+        cumulative_accuracy_tpt += pred_tpt_class.eq(target).sum().item()
         samples += 1
 
         statistics[target]["tpt_improved_samples"] += (
             1
-            if predicted_base.eq(predicted_tpt).sum().item() != 1
-            and predicted_tpt.eq(target).sum().item() == 1
+            if pred_base_class.eq(pred_tpt_class).sum().item() != 1
+            and pred_tpt_class.eq(target).sum().item() == 1
             else 0
         )
         statistics[target]["tpt_worsened_samples"] += (
             1
-            if predicted_base.eq(predicted_tpt).sum().item() != 1
-            and predicted_base.eq(target).sum().item() == 1
+            if pred_base_class.eq(pred_tpt_class).sum().item() != 1
+            and pred_base_class.eq(target).sum().item() == 1
             else 0
         )
         statistics[target]["n_samples"] += 1
 
+        curr_base_acc = (cumulative_accuracy_base / samples) * 100
+        curr_TPTcoop_acc = (cumulative_accuracy_tpt / samples) * 100
+
+        writer.add_scalar("confidence/Base", pred_base_conf * 100, i)
+        writer.add_scalar("confidence/TPT_coop", pred_tpt_conf * 100, i)
+        writer.add_scalar(
+            "TPT_coop/improvement",
+            pred_tpt_class.eq(target).sum().item()
+            - pred_base_class.eq(target).sum().item(),
+            i,
+        )
+        writer.add_scalar("Accuracy/Base", curr_base_acc, i)
+        writer.add_scalar("Accuracy/TPT_coop", curr_TPTcoop_acc, i)
+
         progress_bar.set_postfix(
             {
-                "Base Acc": f"{(cumulative_accuracy_base / samples) * 100:.2f}%",
-                "TPT Acc": f"{cumulative_accuracy_tpt / samples * 100:.2f}%",
+                "Base Acc": f"{curr_base_acc:.2f}%",
+                "TPT Acc": f"{curr_TPTcoop_acc:.2f}%",
             }
         )
 
@@ -132,6 +148,7 @@ def main(
     batch_size=1,
     arch="RN50",
     device="cuda:0",
+    # device="cpu",
     learning_rate=0.03,
     weight_decay=0.0005,
     momentum=0.9,
@@ -141,12 +158,13 @@ def main(
     csc=False,
 ):
     set_random_seed(1234)
+    writer = SummaryWriter("runs/tpt_coop")
 
     classnames = ImageNetA.classnames
 
     augmenter = Augmenter(n_aug=n_aug)
     dataset = ImageNetA(ImageNetA_path, transform=augmenter)
-    dataloader = get_dataloader(dataset, batch_size, shuffle=True, reduced_size=500)
+    dataloader = get_dataloader(dataset, batch_size, shuffle=True, reduced_size=50)
 
     model = get_coop(arch, classnames, device, n_ctx, ctx_init)
     print("Use pre-trained soft prompt (CoOp) as initialization")
@@ -168,8 +186,12 @@ def main(
     cudnn.benchmark = True
     model.reset_classnames(classnames, arch)
 
-    result = test_time_adapt_eval(dataloader, model, optimizer, optim_state, device)
+    result = test_time_adapt_eval(
+        dataloader, model, optimizer, optim_state, writer, device
+    )
     print(result)
+
+    writer.close()
 
 
 if __name__ == "__main__":
