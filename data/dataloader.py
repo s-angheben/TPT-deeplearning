@@ -228,10 +228,10 @@ class ImageNetA(ImageFolder):
         return img, target
 
 
-def get_dataloader(dataset, batch_size, shuffle=False, reduced_size=None):
+def get_dataloader(dataset, batch_size, shuffle=False, reduced_size=None, num_workers=4):
     if reduced_size is not None:
         indices = torch.randperm(len(dataset))[:reduced_size]
         sampler = SubsetRandomSampler(indices.tolist())
-        return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+        return DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=num_workers)
     else:
-        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
