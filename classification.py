@@ -1,5 +1,7 @@
 from data.dataloader import ImageNetA, get_dataloader
-from data.datautils import Augmenter
+
+# from data.datautils import Augmenter
+from data.datautils_TPT import Augmenter
 from model.custom_clip import get_coop
 from utils.utils import set_random_seed
 
@@ -31,15 +33,19 @@ def avg_entropy(outputs):
     return -(avg_logits * torch.exp(avg_logits)).sum(dim=-1)
 
 
-def test_time_tuning(model, inputs, optimizer, tta_step=1, selection_p=0.1):
+def test_time_tuning(model, inputs, optimizer, scaler, tta_step=1, selection_p=0.1):
     for _ in range(tta_step):
-        output = model(inputs)
-        output = select_confident_samples(output, selection_p)
-        loss = avg_entropy(output)
+        with torch.cuda.amp.autocast():
+            output = model(inputs)
+            output = select_confident_samples(output, selection_p)
+            loss = avg_entropy(output)
 
-        loss.backward()
-        optimizer.step()
         optimizer.zero_grad()
+        # compute gradient and do SGD step
+        scaler.scale(loss).backward()
+        # Unscales the gradients of optimizer's assigned params in-place
+        scaler.step(optimizer)
+        scaler.update()
 
     return
 
@@ -54,10 +60,13 @@ def compute_statistics(statistics):
             )
 
 
-def test_time_adapt_eval(dataloader, model, optimizer, optim_state, writer, device):
+def test_time_adapt_eval(
+    dataloader, model, optimizer, optim_state, scaler, writer, device
+):
     samples = 0.0
     cumulative_accuracy_base = 0.0
     cumulative_accuracy_tpt = 0.0
+
     model.eval()
     with torch.no_grad():
         model.reset()
@@ -81,13 +90,15 @@ def test_time_adapt_eval(dataloader, model, optimizer, optim_state, writer, devi
         optimizer.load_state_dict(optim_state)
 
         with torch.no_grad():
-            output = model(orig_img)
+            with torch.cuda.amp.autocast():
+                output = model(orig_img)
         pred_base_conf, pred_base_class = torch.softmax(output, dim=1).max(1)
 
-        test_time_tuning(model, images, optimizer)
+        test_time_tuning(model, images, optimizer, scaler)
 
         with torch.no_grad():
-            output = model(orig_img)
+            with torch.cuda.amp.autocast():
+                output = model(orig_img)
         pred_tpt_conf, pred_tpt_class = torch.softmax(output, dim=1).max(1)
 
         cumulative_accuracy_base += pred_base_class.eq(target).sum().item()
@@ -149,7 +160,7 @@ def main(
     arch="RN50",
     device="cuda:0",
     # device="cpu",
-    learning_rate=0.03,
+    learning_rate=5e-3,
     weight_decay=0.0005,
     momentum=0.9,
     n_ctx=4,
@@ -179,15 +190,16 @@ def main(
 
     model = model.to(device)
 
-    # trainable_param = model.prompt_learner.parameters()
-    optimizer = get_optimizer(model, learning_rate, weight_decay, momentum)
+    trainable_param = model.prompt_learner.parameters()
+    optimizer = torch.optim.AdamW(trainable_param, learning_rate)
     optim_state = deepcopy(optimizer.state_dict())
+    scaler = torch.cuda.amp.GradScaler(init_scale=1000)
 
     cudnn.benchmark = True
     model.reset_classnames(classnames, arch)
 
     result = test_time_adapt_eval(
-        dataloader, model, optimizer, optim_state, writer, device
+        dataloader, model, optimizer, optim_state, scaler, writer, device
     )
     print(result)
 

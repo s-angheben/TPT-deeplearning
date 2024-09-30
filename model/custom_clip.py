@@ -3,8 +3,8 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 
-from clip import load, tokenize
-from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
+from .clip import load, tokenize
+from .simple_tokenizer import SimpleTokenizer as _Tokenizer
 
 
 _tokenizer = _Tokenizer()
@@ -165,7 +165,7 @@ class PromptLearner(nn.Module):
             self.cls_init_state = cls_vectors.detach().clone()
         tokenized_prompts = torch.cat([tokenize(p) for p in prompts]).to(self.device)
 
-        clip, _ = load(arch, device=self.device, download_root=DOWNLOAD_ROOT)
+        clip, _, _ = load(arch, device=self.device, download_root=DOWNLOAD_ROOT)
 
         with torch.no_grad():
             embedding = clip.token_embedding(tokenized_prompts).type(self.dtype)
@@ -287,7 +287,7 @@ class ClipTestTimeTuning(nn.Module):
         learned_cls=False,
     ):
         super(ClipTestTimeTuning, self).__init__()
-        clip, _ = load(arch, device=device, download_root=DOWNLOAD_ROOT)
+        clip, _, _ = load(arch, device=device, download_root=DOWNLOAD_ROOT)
         self.image_encoder = clip.visual
         self.text_encoder = TextEncoder(clip)
         self.logit_scale = clip.logit_scale.data
