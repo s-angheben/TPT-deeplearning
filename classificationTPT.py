@@ -1,6 +1,7 @@
 from data.dataloader import ImageNetA, get_dataloader
 
 from data.datautils import PatchAugmenter
+from data.datautils_TPT import Augmenter
 from model.custom_clip import get_coop
 from utils.utils import set_random_seed
 
@@ -32,20 +33,12 @@ def avg_entropy(outputs):
     return -(avg_logits * torch.exp(avg_logits)).sum(dim=-1)
 
 
-def test_time_tuning(model, patch_inputs, optimizer, scaler, tta_step=1, selection_p=0.1):
+def test_time_tuning(model, inputs, optimizer, scaler, tta_step=1, selection_p=0.1):
     for _ in range(tta_step):
         with torch.cuda.amp.autocast():
-            
-            
-            patch_outputs = []
-            for i, patch_input in enumerate(patch_inputs):
-                tmp_patch_outputs = model(patch_input)
-                patch_outputs.append(avg_entropy(select_confident_samples(tmp_patch_outputs, selection_p)))
-
-            # logic patches
-            #output = torch.mean(torch.stack(patch_outputs), dim=0)
-            #output = patch_outputs[0]
-            loss = patch_outputs[0]
+            output = model(inputs)
+            output = select_confident_samples(output, selection_p)
+            loss = avg_entropy(output)
 
         optimizer.zero_grad()
         # compute gradient and do SGD step
@@ -96,16 +89,9 @@ def test_time_adapt_eval(
 
     progress_bar = tqdm(enumerate(dataloader), total=len(dataloader))
     for i, (imgs, target) in progress_bar:
-        assert len(imgs) == 2
-        assert isinstance(imgs[0], torch.Tensor)
-        assert len(imgs[1]) == 4
-        assert len(imgs[1][0]) == 1
-
+        images = torch.cat(imgs, dim=0).to(device)
+        # images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider original image
         orig_img = imgs[0].to(device)
-        patch_images = []
-        for i in range(len(imgs[1])):
-            patch_images.append(torch.cat(imgs[1][i], dim=0).to(device))
-
         target = target.to(device)
 
         with torch.no_grad():
@@ -117,7 +103,7 @@ def test_time_adapt_eval(
                 output = model(orig_img)
         pred_base_conf, pred_base_class = torch.softmax(output, dim=1).max(1)
 
-        test_time_tuning(model, patch_images, optimizer, scaler)
+        test_time_tuning(model, images, optimizer, scaler)
 
         with torch.no_grad():
             with torch.cuda.amp.autocast():
@@ -179,7 +165,7 @@ def main(
     ImageNetA_path="../Datasets/imagenet-a/",
     coop_weight_path="../model.pth.tar-50",
     n_aug=0,
-    n_patches=4,
+    n_patches=16,
     batch_size=1,
     arch="RN50",
     device="cuda:0",
@@ -191,13 +177,17 @@ def main(
     ctx_init="",
     class_token_position="end",
     csc=False,
+    selected_augmenter = "TPTAgumenter"
 ):
     set_random_seed(1234)
     writer = SummaryWriter("runs/tpt_coop")
 
     classnames = ImageNetA.classnames
 
-    augmenter = PatchAugmenter(n_aug=n_aug, n_patches=n_patches)
+    if selected_augmenter == "TPTAgumenter":
+        augmenter = Augmenter(n_aug=n_aug)
+    else:
+        augmenter = PatchAugmenter(n_aug=n_aug, n_patches=n_patches)
 
     dataset = ImageNetA(ImageNetA_path, transform=augmenter)
     dataloader = get_dataloader(dataset, batch_size, shuffle=True, reduced_size=None, num_workers=8)
