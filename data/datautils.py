@@ -18,36 +18,40 @@ def get_clip_preprocess():
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
 
-def crop_patches(image, preprocess, n=16):
-    H, W = image.size
-    n = int(n ** 0.5) # number of patches in each dimension
-    patch_size = H // n
-    patches = []
+def get_patches(image, clip_preprocess, n):
+    width, height = image.size
     
+    part_width = width // n
+    part_height = height // n
+    images = []
+
     for i in range(n):
         for j in range(n):
-            top = i * patch_size
-            left = j * patch_size
-            patch = F.crop(image, top, left, patch_size, patch_size)
-            patches.append(preprocess(patch))
-    
-    assert len(patches) == n * n 
-    return patches
+            left = j * part_width
+            upper = i * part_height
+            right = (j + 1) * part_width if j < n - 1 else width  
+            lower = (i + 1) * part_height if i < n - 1 else height
+            
+            cropped_image = image.crop((left, upper, right, lower))
+            images.append(clip_preprocess(cropped_image))
+
+    return images
+
+    return images
 
 class PatchAugmenter(object):
     def __init__(self, n_aug=2, n_patches=16):
         self.preprocess = get_clip_preprocess()
         self.n_aug = n_aug
         self.augmix = v2.AugMix()
-        self.crop_patches = crop_patches
+        self.crop_patches = get_patches
         self.n_patches = n_patches
 
     def __call__(self, x):
         img = self.preprocess(x)
         patches = self.crop_patches(x, self.preprocess, self.n_patches)
-        patches_augm = [[patch]+[self.augmix(patch) for _ in range(self.n_aug)] for patch in patches]
-        print()
-        return [img] + [patches_augm]
+        patches_augm = [augmented_patch for patch in patches for augmented_patch in [patch] + [self.augmix(patch) for _ in range(self.n_aug)]]
+        return [img] + patches_augm
 
 
 # img_orig + patch_orig + patch_augm

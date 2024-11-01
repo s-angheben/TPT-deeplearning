@@ -51,23 +51,34 @@ def test_time_tuning(model, inputs, optimizer, scaler, tta_step=1, selection_p=0
 
 
 def compute_statistics(statistics):
-    statistics_global = {"tpt_improved_samples": 0, "tpt_worsened_samples": 0, "n_samples": 0}
+    statistics_global = {
+        "tpt_improved_samples": 0,
+        "tpt_worsened_samples": 0,
+        "n_samples": 0,
+    }
 
     for i in range(200):
         if statistics[i]["n_samples"] != 0:
-            #global statistics
-            statistics_global["tpt_improved_samples"] += statistics[i]["tpt_improved_samples"]
-            statistics_global["tpt_worsened_samples"] += statistics[i]["tpt_worsened_samples"]
+            # global statistics
+            statistics_global["tpt_improved_samples"] += statistics[i][
+                "tpt_improved_samples"
+            ]
+            statistics_global["tpt_worsened_samples"] += statistics[i][
+                "tpt_worsened_samples"
+            ]
             statistics_global["n_samples"] += statistics[i]["n_samples"]
-            
-            #class statistics
+
+            # class statistics
             statistics[i]["tpt_improved_samples"] /= statistics[i]["n_samples"]
             statistics[i]["tpt_worsened_samples"] /= statistics[i]["n_samples"]
             print(
                 f"Class {i}: Improved {statistics[i]['tpt_improved_samples']:.2f}, Worsened {statistics[i]['tpt_worsened_samples']:.2f}, Samples {statistics[i]['n_samples']}"
             )
-    
-    print(f"Global: Improved {statistics_global['tpt_improved_samples']/statistics_global['n_samples']:.4f}, Worsened {statistics_global['tpt_worsened_samples']/statistics_global['n_samples']:.4f}, Samples {statistics_global['n_samples']}")
+
+    print(
+        f"Global: Improved {statistics_global['tpt_improved_samples']/statistics_global['n_samples']:.4f}, Worsened {statistics_global['tpt_worsened_samples']/statistics_global['n_samples']:.4f}, Samples {statistics_global['n_samples']}"
+    )
+
 
 def test_time_adapt_eval(
     dataloader, model, optimizer, optim_state, scaler, writer, device
@@ -177,7 +188,7 @@ def main(
     ctx_init="",
     class_token_position="end",
     csc=False,
-    selected_augmenter = "TPTAgumenter"
+    selected_augmenter="TPTAgumenter",
 ):
     set_random_seed(1234)
     writer = SummaryWriter("runs/tpt_coop")
@@ -190,7 +201,9 @@ def main(
         augmenter = PatchAugmenter(n_aug=n_aug, n_patches=n_patches)
 
     dataset = ImageNetA(ImageNetA_path, transform=augmenter)
-    dataloader = get_dataloader(dataset, batch_size, shuffle=True, reduced_size=None, num_workers=8)
+    dataloader = get_dataloader(
+        dataset, batch_size, shuffle=True, reduced_size=10, num_workers=1
+    )
 
     model = get_coop(arch, classnames, device, n_ctx, ctx_init)
     print("Use pre-trained soft prompt (CoOp) as initialization")

@@ -32,20 +32,56 @@ def avg_entropy(outputs):
     return -(avg_logits * torch.exp(avg_logits)).sum(dim=-1)
 
 
-def test_time_tuning(model, patch_inputs, optimizer, scaler, tta_step=1, selection_p=0.1):
+def selective_entropy_loss(outputs, entropy_threshold=0.5):
+    # Step 1: Average class distributions across augmentations for each patch
+    avg_logits_per_patch = outputs.logsumexp(dim=1) - np.log(outputs.shape[1])  # Shape: [patch, classes]
+    
+    # Step 2: Calculate entropy for each patch
+    avg_logits_per_patch = torch.clamp(avg_logits_per_patch, min=torch.finfo(avg_logits_per_patch.dtype).min)
+    entropy_per_patch = -(avg_logits_per_patch * torch.exp(avg_logits_per_patch)).sum(dim=-1)  # Shape: [patch]
+    
+    # Step 3: Define the loss conditionally based on entropy threshold
+    # 3a: Force consistency between patches if entropy across patches is high
+    if entropy_per_patch.mean() > entropy_threshold:
+        # Minimize variance or KL divergence between patches
+        consistency_loss = 0
+        for i in range(avg_logits_per_patch.shape[0] - 1):
+            for j in range(i + 1, avg_logits_per_patch.shape[0]):
+                consistency_loss += torch.nn.functional.kl_div(
+                    avg_logits_per_patch[i].log_softmax(dim=0), avg_logits_per_patch[j].softmax(dim=0), reduction="batchmean"
+                )
+        consistency_loss /= avg_logits_per_patch.shape[0] * (avg_logits_per_patch.shape[0] - 1) / 2
+        return consistency_loss
+    
+    # 3b: Otherwise, target only patches with high entropy
+    else:
+        high_entropy_patches = entropy_per_patch > entropy_threshold
+        selective_entropy_loss = entropy_per_patch[high_entropy_patches].mean()
+        return selective_entropy_loss
+
+# n_aug = 2, n_patches = 2, 
+# torch.Size([13, 200]): [orig_img, patch1, patch1_aug1, patch1_aug2, patch1_aug3, ... , patch4_aug1, patch4_aug2, patch4_aug3]
+# return 
+# torch.Size([5, 3, 200])
+def reshape_output_patches(output, n_aug):
+    first_tensor_repeated = output[0].repeat(n_aug, 1)  # Repeat the first tensor 
+    output = torch.cat((first_tensor_repeated, output), dim=0)
+    return output
+    # a = tt.view(-1, n_patches+1, 200)
+    # b = tt.view(-1, n_aug+1, 200)
+    # assert(torch.equal(a, b))
+
+def test_time_tuning(
+    model, n_aug, n_patches, inputs, optimizer, scaler, tta_step=1, selection_p=0.1
+):
     for _ in range(tta_step):
         with torch.cuda.amp.autocast():
+            output = model(inputs)
+            output = reshape_output_patches(output, n_aug)
+            loss = selective_entropy_loss(output)
+            # output = select_confident_samples(output, selection_p)
+            #loss = avg_entropy(output)
             
-            
-            patch_outputs = []
-            for i, patch_input in enumerate(patch_inputs):
-                tmp_patch_outputs = model(patch_input)
-                patch_outputs.append(avg_entropy(select_confident_samples(tmp_patch_outputs, selection_p)))
-
-            # logic patches
-            #output = torch.mean(torch.stack(patch_outputs), dim=0)
-            #output = patch_outputs[0]
-            loss = patch_outputs[0]
 
         optimizer.zero_grad()
         # compute gradient and do SGD step
@@ -58,26 +94,37 @@ def test_time_tuning(model, patch_inputs, optimizer, scaler, tta_step=1, selecti
 
 
 def compute_statistics(statistics):
-    statistics_global = {"tpt_improved_samples": 0, "tpt_worsened_samples": 0, "n_samples": 0}
+    statistics_global = {
+        "tpt_improved_samples": 0,
+        "tpt_worsened_samples": 0,
+        "n_samples": 0,
+    }
 
     for i in range(200):
         if statistics[i]["n_samples"] != 0:
-            #global statistics
-            statistics_global["tpt_improved_samples"] += statistics[i]["tpt_improved_samples"]
-            statistics_global["tpt_worsened_samples"] += statistics[i]["tpt_worsened_samples"]
+            # global statistics
+            statistics_global["tpt_improved_samples"] += statistics[i][
+                "tpt_improved_samples"
+            ]
+            statistics_global["tpt_worsened_samples"] += statistics[i][
+                "tpt_worsened_samples"
+            ]
             statistics_global["n_samples"] += statistics[i]["n_samples"]
-            
-            #class statistics
+
+            # class statistics
             statistics[i]["tpt_improved_samples"] /= statistics[i]["n_samples"]
             statistics[i]["tpt_worsened_samples"] /= statistics[i]["n_samples"]
             print(
                 f"Class {i}: Improved {statistics[i]['tpt_improved_samples']:.2f}, Worsened {statistics[i]['tpt_worsened_samples']:.2f}, Samples {statistics[i]['n_samples']}"
             )
-    
-    print(f"Global: Improved {statistics_global['tpt_improved_samples']/statistics_global['n_samples']:.4f}, Worsened {statistics_global['tpt_worsened_samples']/statistics_global['n_samples']:.4f}, Samples {statistics_global['n_samples']}")
+
+    print(
+        f"Global: Improved {statistics_global['tpt_improved_samples']/statistics_global['n_samples']:.4f}, Worsened {statistics_global['tpt_worsened_samples']/statistics_global['n_samples']:.4f}, Samples {statistics_global['n_samples']}"
+    )
+
 
 def test_time_adapt_eval(
-    dataloader, model, optimizer, optim_state, scaler, writer, device
+    dataloader, model, n_aug, n_patches, optimizer, optim_state, scaler, writer, device
 ):
     samples = 0.0
     cumulative_accuracy_base = 0.0
@@ -96,16 +143,9 @@ def test_time_adapt_eval(
 
     progress_bar = tqdm(enumerate(dataloader), total=len(dataloader))
     for i, (imgs, target) in progress_bar:
-        assert len(imgs) == 2
-        assert isinstance(imgs[0], torch.Tensor)
-        assert len(imgs[1]) == 4
-        assert len(imgs[1][0]) == 1
-
+        images = torch.cat(imgs, dim=0).to(device)
+        # images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider original image
         orig_img = imgs[0].to(device)
-        patch_images = []
-        for i in range(len(imgs[1])):
-            patch_images.append(torch.cat(imgs[1][i], dim=0).to(device))
-
         target = target.to(device)
 
         with torch.no_grad():
@@ -117,7 +157,7 @@ def test_time_adapt_eval(
                 output = model(orig_img)
         pred_base_conf, pred_base_class = torch.softmax(output, dim=1).max(1)
 
-        test_time_tuning(model, patch_images, optimizer, scaler)
+        test_time_tuning(model, n_aug, n_patches, images, optimizer, scaler)
 
         with torch.no_grad():
             with torch.cuda.amp.autocast():
@@ -179,7 +219,7 @@ def main(
     ImageNetA_path="../Datasets/imagenet-a/",
     coop_weight_path="../model.pth.tar-50",
     n_aug=0,
-    n_patches=4,
+    n_patches=16,
     batch_size=1,
     arch="RN50",
     device="cuda:0",
@@ -200,7 +240,9 @@ def main(
     augmenter = PatchAugmenter(n_aug=n_aug, n_patches=n_patches)
 
     dataset = ImageNetA(ImageNetA_path, transform=augmenter)
-    dataloader = get_dataloader(dataset, batch_size, shuffle=True, reduced_size=None, num_workers=8)
+    dataloader = get_dataloader(
+        dataset, batch_size, shuffle=True, reduced_size=10, num_workers=1
+    )
 
     model = get_coop(arch, classnames, device, n_ctx, ctx_init)
     print("Use pre-trained soft prompt (CoOp) as initialization")
@@ -224,7 +266,15 @@ def main(
     model.reset_classnames(classnames, arch)
 
     result = test_time_adapt_eval(
-        dataloader, model, optimizer, optim_state, scaler, writer, device
+        dataloader,
+        model,
+        n_aug,
+        n_patches,
+        optimizer,
+        optim_state,
+        scaler,
+        writer,
+        device,
     )
     print(result)
 

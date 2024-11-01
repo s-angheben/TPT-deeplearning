@@ -2,3 +2,6 @@
 data/__pycache__/
 model/__pycache__/
 utils/__pycache__/
+notebooks/.cache
+notebooks/.ipynb_checkpoints
+notebooks/runs/
