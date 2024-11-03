@@ -56,13 +56,13 @@ def show_patches(imgs, n_aug, n_patches, label=None):
     if label is not None:
         fig.suptitle(f"Label: {label}", fontsize=16)
 
-    orig_img = imgs[0]
-    axs[0][0].imshow(np.asarray(F.to_pil_image(orig_img.detach())))
+    #orig_img = imgs[0]
+    #axs[0][0].imshow(np.asarray(F.to_pil_image(orig_img.detach())))
 
-    imgs = imgs[1:]
-    for i in range(1, num_rows):
+    #imgs = imgs[1:]
+    for i in range(num_rows):
         for j in range(num_cols):
-            img = imgs[(i-1)*num_cols + j]
+            img = imgs[i*num_cols + j]
             img = F.to_pil_image(img)
             axs[i][j].imshow(np.asarray(img))
             axs[i][j].set(xticklabels=[], yticklabels=[], xticks=[], yticks=[])

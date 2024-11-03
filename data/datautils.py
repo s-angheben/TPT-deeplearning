@@ -49,9 +49,10 @@ class PatchAugmenter(object):
 
     def __call__(self, x):
         img = self.preprocess(x)
+        img_orig_aug = [self.augmix(img) for _ in range(self.n_aug)]
         patches = self.crop_patches(x, self.preprocess, self.n_patches)
         patches_augm = [augmented_patch for patch in patches for augmented_patch in [patch] + [self.augmix(patch) for _ in range(self.n_aug)]]
-        return [img] + patches_augm
+        return [img] + img_orig_aug + patches_augm
 
 
 # img_orig + patch_orig + patch_augm

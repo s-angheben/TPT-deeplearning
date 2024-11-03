@@ -29,6 +29,7 @@ def avg_entropy(outputs):
     )  # avg_logits = logits.mean(0) [1, 1000]
     min_real = torch.finfo(avg_logits.dtype).min
     avg_logits = torch.clamp(avg_logits, min=min_real)
+    print(avg_logits.shape)
     return -(avg_logits * torch.exp(avg_logits)).sum(dim=-1)
 
 
@@ -59,14 +60,36 @@ def selective_entropy_loss(outputs, entropy_threshold=0.5):
         selective_entropy_loss = entropy_per_patch[high_entropy_patches].mean()
         return selective_entropy_loss
 
+# 5 4 200
+# 3 augmentations 
+# 4 patches
+def patch_loss(outputs, n_patches, patch_selection_p=0.9):
+    selected_outputs = []
+    print(outputs.shape)
+    print(outputs[0].shape)
+    for i in range(0, n_patches * 2 + 1): 
+        selected_output = select_confident_samples(outputs[i], patch_selection_p)
+        print(selected_output.shape)
+        selected_outputs.append(selected_output)  # Append each selected output to the list
+    all_selected_output = torch.stack(selected_outputs, dim=0)
+    print(all_selected_output.shape)
+    avg_entropy(all_selected_output[0])
+    
+    # [5 3 200] -> [15 200] -> [1 200] -> [1] -> loss   | 0 1 0 | y - mean(pred(x))
+
+    # 2:[3 200] -> [1 200] -> [1]                       | 0 1 0 | y - pred[i](x)
+
+    # x -> N -> y_pred -> loss (numero ->y-y_pred) 0 1 0  0.9 0.1 0 
+ 
+
+
+
 # n_aug = 2, n_patches = 2, 
 # torch.Size([13, 200]): [orig_img, patch1, patch1_aug1, patch1_aug2, patch1_aug3, ... , patch4_aug1, patch4_aug2, patch4_aug3]
 # return 
 # torch.Size([5, 3, 200])
 def reshape_output_patches(output, n_aug):
-    first_tensor_repeated = output[0].repeat(n_aug, 1)  # Repeat the first tensor 
-    output = torch.cat((first_tensor_repeated, output), dim=0)
-    return output
+    return output.view(-1, n_aug+1, output.shape[-1])
     # a = tt.view(-1, n_patches+1, 200)
     # b = tt.view(-1, n_aug+1, 200)
     # assert(torch.equal(a, b))
@@ -78,7 +101,8 @@ def test_time_tuning(
         with torch.cuda.amp.autocast():
             output = model(inputs)
             output = reshape_output_patches(output, n_aug)
-            loss = selective_entropy_loss(output)
+            loss = patch_loss(output, n_patches, 0.9)
+            #loss = selective_entropy_loss(output, n_aug)
             # output = select_confident_samples(output, selection_p)
             #loss = avg_entropy(output)
             
@@ -218,8 +242,8 @@ def get_optimizer(model, lr, wd, momentum):
 def main(
     ImageNetA_path="../Datasets/imagenet-a/",
     coop_weight_path="../model.pth.tar-50",
-    n_aug=0,
-    n_patches=16,
+    n_aug=3,
+    n_patches=2,
     batch_size=1,
     arch="RN50",
     device="cuda:0",
