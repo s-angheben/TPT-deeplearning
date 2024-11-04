@@ -6,6 +6,7 @@ from utils.utils import set_random_seed
 
 import torch.backends.cudnn as cudnn
 import torch
+import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
@@ -29,7 +30,7 @@ def avg_entropy(outputs):
     )  # avg_logits = logits.mean(0) [1, 1000]
     min_real = torch.finfo(avg_logits.dtype).min
     avg_logits = torch.clamp(avg_logits, min=min_real)
-    print(avg_logits.shape)
+    #print(avg_logits.shape)
     return -(avg_logits * torch.exp(avg_logits)).sum(dim=-1)
 
 
@@ -63,25 +64,97 @@ def selective_entropy_loss(outputs, entropy_threshold=0.5):
 # 5 4 200
 # 3 augmentations 
 # 4 patches
+
+def select_most_frequent_class(logits):
+    probabilities = logits.softmax(dim=-1)
+    predicted_classes = probabilities.argmax(dim=2)
+    most_frequent_classes = torch.mode(predicted_classes, dim=1).values
+    return most_frequent_classes
+
+def weighted_most_frequent_class(entropy, classes):
+    weights = 1 / (entropy + 1e-6)
+    weighted_counts = {}
+    for i, cls in enumerate(classes):
+        if cls.item() not in weighted_counts:
+            weighted_counts[cls.item()] = 0
+        weighted_counts[cls.item()] += weights[i].item()
+    most_frequent_class = max(weighted_counts, key=weighted_counts.get)
+    return torch.tensor(most_frequent_class).to(entropy.device)
+
+def weighted_class_distribution(entropy, classes, n_classes):
+    weights = 1 / (entropy + 1e-6)
+    
+    weighted_counts = {}
+    for i, cls in enumerate(classes):
+        if cls.item() not in weighted_counts:
+            weighted_counts[cls.item()] = 0
+        weighted_counts[cls.item()] += weights[i].item()
+    
+    total_weight = sum(weighted_counts.values())
+    distribution = torch.zeros(n_classes, device=entropy.device)
+    
+    for cls, weight in weighted_counts.items():
+        distribution[cls] = weight / total_weight
+
+    return distribution
+
 def patch_loss(outputs, n_patches, patch_selection_p=0.9):
     selected_outputs = []
-    print(outputs.shape)
-    print(outputs[0].shape)
-    for i in range(0, n_patches * 2 + 1): 
+
+    output_original_image = outputs[0][0]
+
+    patch_entropy = []
+    for i in range(0, n_patches * n_patches + 1): 
         selected_output = select_confident_samples(outputs[i], patch_selection_p)
-        print(selected_output.shape)
+        patch_entropy.append(avg_entropy(selected_output))
+        
         selected_outputs.append(selected_output)  # Append each selected output to the list
-    all_selected_output = torch.stack(selected_outputs, dim=0)
-    print(all_selected_output.shape)
-    avg_entropy(all_selected_output[0])
+        '''
+        for s in selected_output:
+            selected_class = torch.softmax(s, dim=0).max(0).indices.item()
+            print(selected_class)
+        '''
     
-    # [5 3 200] -> [15 200] -> [1 200] -> [1] -> loss   | 0 1 0 | y - mean(pred(x))
+    # 1 Cross entropy loss between the original image and the weighted probability distribution 
 
-    # 2:[3 200] -> [1 200] -> [1]                       | 0 1 0 | y - pred[i](x)
+    all_selected_output = torch.stack(selected_outputs, dim=0)
+    patch_entropy = torch.stack(patch_entropy, dim=0)
+    patch_classes = select_most_frequent_class(all_selected_output) # Calculate the most frequent class for each patch
+    # Calculate the weighted class distribution based on occorrencies in order to use it as the target distribution
+    target_distribution = weighted_class_distribution(patch_entropy[1:], patch_classes[1:], output_original_image.shape[-1])  
+    # Calculate the cross entropy loss between the original image and the target probability distribution
+    log_probs = F.log_softmax(output_original_image, dim=-1)
+    loss = -(target_distribution * log_probs).sum()
 
-    # x -> N -> y_pred -> loss (numero ->y-y_pred) 0 1 0  0.9 0.1 0 
- 
 
+    # 2 Cross entropy loss between the original image and the most frequent class
+    '''
+    all_selected_output = torch.stack(selected_outputs, dim=0)
+    patch_entropy = torch.stack(patch_entropy, dim=0)
+    patch_classes = select_most_frequent_class(all_selected_output) # Calculate the most frequent class for each patch
+    # Calculate the most frequent class for the patches weighted by their entropy
+    most_frequent_class = weighted_most_frequent_class(patch_entropy[1:], patch_classes[1:])  
+    # Calculate the cross entropy loss between the original image and the most frequent class
+    loss = F.cross_entropy(output_original_image.unsqueeze(0), most_frequent_class.unsqueeze(0))
+    '''
+    # 3 Give a weight to each patch based on its entropy
+    '''
+    epsilon = 1e-6
+    weights = 1 / (patch_entropy + epsilon)
+    weights /= weights.sum() #normalization
+    print("Weights", weights)
+    print("Entropy patches", patch_entropy)
+    print("Weights", weights)
+    weighted_entropy = (patch_entropy * weights).sum()
+    print("Weighted entropy", weighted_entropy)
+    
+    loss = weighted_entropy
+    '''
+    # 4 Use the loss of the patch with the lowest entropy
+    '''
+    #loss = patch_entropy.min()
+    '''
+    return loss
 
 
 # n_aug = 2, n_patches = 2, 
@@ -95,13 +168,13 @@ def reshape_output_patches(output, n_aug):
     # assert(torch.equal(a, b))
 
 def test_time_tuning(
-    model, n_aug, n_patches, inputs, optimizer, scaler, tta_step=1, selection_p=0.1
+    model, n_aug, n_patches, inputs, optimizer, scaler, tta_step=1, selection_p=0.2
 ):
     for _ in range(tta_step):
         with torch.cuda.amp.autocast():
             output = model(inputs)
             output = reshape_output_patches(output, n_aug)
-            loss = patch_loss(output, n_patches, 0.9)
+            loss = patch_loss(output, n_patches, selection_p)
             #loss = selective_entropy_loss(output, n_aug)
             # output = select_confident_samples(output, selection_p)
             #loss = avg_entropy(output)
@@ -242,8 +315,8 @@ def get_optimizer(model, lr, wd, momentum):
 def main(
     ImageNetA_path="../Datasets/imagenet-a/",
     coop_weight_path="../model.pth.tar-50",
-    n_aug=3,
-    n_patches=2,
+    n_aug=15,
+    n_patches=4,
     batch_size=1,
     arch="RN50",
     device="cuda:0",
@@ -265,7 +338,7 @@ def main(
 
     dataset = ImageNetA(ImageNetA_path, transform=augmenter)
     dataloader = get_dataloader(
-        dataset, batch_size, shuffle=True, reduced_size=10, num_workers=1
+        dataset, batch_size, shuffle=True, reduced_size=None, num_workers=8
     )
 
     model = get_coop(arch, classnames, device, n_ctx, ctx_init)
