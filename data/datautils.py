@@ -1,5 +1,6 @@
 import torch
 import torchvision.transforms as transforms
+import torchvision.transforms.functional as F
 import numpy as np
 import math
 
@@ -70,7 +71,7 @@ class AugmenterTPT(object):
         augmented = [
             self.augmix(self.preprocess(self.preaugment(x))) for _ in range(self.n_aug)
         ]
-        return [image] + augmented
+        return [F.to_tensor(x)] + [image] + augmented
 
 
 #################################################
@@ -97,6 +98,7 @@ def crop_patches(image, clip_preprocess, n):
     return images
 
 
+## n_patches is the total number of patches
 class PatchAugmenter(object):
     def __init__(self, n_aug=2, n_patches=16, severity=1):
         self.n_aug = n_aug

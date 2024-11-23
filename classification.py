@@ -1,9 +1,10 @@
 from data.dataloader import ImageNetA, get_dataloader
-from data.datautils import AugmenterTPT
+from data.datautils import AugmenterTPT, PatchAugmenter
 from model.custom_clip import get_coop
 from utils.utils import set_random_seed
 
 import torch.backends.cudnn as cudnn
+import torch.nn.functional as F
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -65,6 +66,12 @@ def test_time_adapt_eval(
     samples = 0.0
     cumulative_accuracy_base = 0.0
     cumulative_accuracy_tpt = 0.0
+    cumulative_crossEntropy_base = 0.0
+    cumulative_crossEntropy_tpt = 0.0
+    cumulative_kl_base = 0.0
+    cumulative_kl_tpt = 0.0
+
+    crossEntropy = torch.nn.CrossEntropyLoss()
 
     model.eval()
     with torch.no_grad():
@@ -72,11 +79,17 @@ def test_time_adapt_eval(
 
     print("Test Time Evaluation")
 
+    statistics = [
+        {"target" : target, "tpt_improved_samples": [], "tpt_worsened_samples": [], "n_samples": 0}
+        for target in range(args.nclasses)
+    ]
+
     progress_bar = tqdm(enumerate(dataloader), total=len(dataloader))
     for i, (imgs, target) in progress_bar:
-        images = torch.cat(imgs, dim=0).to(device)
-        # images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider original image
-        orig_img = imgs[0].to(device)
+        view_img = imgs[0]
+        images = torch.cat(imgs[1:], dim=0).to(device)  # don't consider view image
+        orig_img = imgs[1].to(device)
+        target_class = target.item()
         target = target.to(device)
 
         with torch.no_grad():
@@ -85,33 +98,71 @@ def test_time_adapt_eval(
 
         with torch.no_grad():
             with torch.cuda.amp.autocast():
-                output = model(orig_img)
-        pred_base_conf, pred_base_class = torch.softmax(output, dim=1).max(1)
+                output_base = model(orig_img)
+        pred_base_conf, pred_base_class = torch.softmax(output_base, dim=1).max(1)
+        pred_base_probs = torch.softmax(output_base, dim=1)
+        base_crossEntropy = crossEntropy(output_base, target)
 
         test_time_tuning(model, images, optimizer, scaler, args)
 
         with torch.no_grad():
             with torch.cuda.amp.autocast():
-                output = model(orig_img)
-        pred_tpt_conf, pred_tpt_class = torch.softmax(output, dim=1).max(1)
+                output_tpt = model(orig_img)
+        pred_tpt_conf, pred_tpt_class = torch.softmax(output_tpt, dim=1).max(1)
+        pred_tpt_probs = torch.softmax(output_tpt, dim=1)
+        tpt_crossEntropy = crossEntropy(output_tpt, target)
+
+        writer.add_scalar("confidence/Base", pred_base_conf, i)
+        writer.add_scalar("confidence/TPT_coop", pred_tpt_conf, i)
+        writer.add_scalar("confidence/difference(TPT-base)", pred_tpt_conf-pred_base_conf, i)
+
+        cumulative_crossEntropy_base += base_crossEntropy
+        cumulative_crossEntropy_tpt += tpt_crossEntropy
+
+        writer.add_scalar("crossEntropy/Base", base_crossEntropy, i)
+        writer.add_scalar("crossEntropy/TPT_coop", tpt_crossEntropy, i)
+        writer.add_scalar("crossEntropy/difference(base-TPT)", base_crossEntropy-tpt_crossEntropy, i)
+
+        true_dist = F.one_hot(target, num_classes=args.nclasses).float().to(device)
+        kl_base = F.kl_div(pred_base_probs.log(), true_dist, reduction='batchmean')
+        kl_tpt = F.kl_div(pred_tpt_probs.log(), true_dist, reduction='batchmean')
+
+        writer.add_scalar("KL/Base_vs_True", kl_base.item(), i)
+        writer.add_scalar("KL/TPT_vs_True", kl_tpt.item(), i)
+        writer.add_scalar("KL/Base-TPT", kl_base.item()-kl_tpt.item(), i)
 
         cumulative_accuracy_base += pred_base_class.eq(target).sum().item()
         cumulative_accuracy_tpt += pred_tpt_class.eq(target).sum().item()
         samples += 1
 
-        curr_base_acc = (cumulative_accuracy_base / samples) * 100
-        curr_TPTcoop_acc = (cumulative_accuracy_tpt / samples) * 100
+        # Calculate current accuracy
+        curr_base_acc = cumulative_accuracy_base / samples
+        curr_TPTcoop_acc = cumulative_accuracy_tpt / samples
 
-        writer.add_scalar("confidence/Base", pred_base_conf * 100, i)
-        writer.add_scalar("confidence/TPT_coop", pred_tpt_conf * 100, i)
-        writer.add_scalar(
-            "TPT_coop/improvement",
-            pred_tpt_class.eq(target).sum().item()
-            - pred_base_class.eq(target).sum().item(),
-            i,
-        )
         writer.add_scalar("Accuracy/Base", curr_base_acc, i)
         writer.add_scalar("Accuracy/TPT_coop", curr_TPTcoop_acc, i)
+        writer.add_scalar("Accuracy/difference(TPT-base)", curr_TPTcoop_acc-curr_base_acc, i)
+
+        improvement = (
+            pred_tpt_class.eq(target).sum().item()
+            - pred_base_class.eq(target).sum().item()
+        )
+        writer.add_scalar("Samples/TPTimprovement", improvement, i)
+
+        if improvement > 0:
+            if args.save_imgs:
+                writer.add_image(
+                    f"Improved_Images/img_{i}:{target_class}-{args.classnames[target_class]}", view_img.squeeze(0), target_class, i
+                )
+            statistics[target]["tpt_improved_samples"].append(i)
+        elif improvement < 0:
+            if args.save_imgs:
+                writer.add_image(
+                    f"Worsened_Images/img_{i}:{target_class}-{args.classnames[target_class]}", view_img.squeeze(0), target_class, i
+                )
+            statistics[target]["tpt_worsened_samples"].append(i)
+
+        statistics[target]["n_samples"] += 1
 
         progress_bar.set_postfix(
             {
@@ -120,15 +171,60 @@ def test_time_adapt_eval(
             }
         )
 
-    return cumulative_accuracy_tpt / samples * 100
+    global_stat =  {
+        "tpt_improved_samples": [],
+        "tpt_worsened_samples": [],
+        "n_samples": 0,
+    }
+    for target in range(args.nclasses):
+        ntpt_improved = len(statistics[target]["tpt_improved_samples"]) 
+        ntpt_worsened = len(statistics[target]["tpt_worsened_samples"]) 
+        statistics[target]["ntpt_improved"] = ntpt_improved
+        statistics[target]["ntpt_worsened"] = ntpt_worsened
+
+        writer.add_scalar("Samples-PerClass/NImproved", ntpt_improved, target)
+        writer.add_scalar("Samples-PerClass/NWorsened", ntpt_worsened, target)
+        writer.add_scalar("Samples-PerClass/Nsamples", statistics[target]["n_samples"], target) 
+        writer.add_scalar("Samples-PerClass/ImprovedRatio", ntpt_improved/statistics[target]["n_samples"] if statistics[target]["n_samples"]!=0 else 0, target)
+        writer.add_scalar("Samples-PerClass/WorsenedRatio", ntpt_worsened/statistics[target]["n_samples"] if statistics[target]["n_samples"]!=0 else 0, target)
+
+        global_stat["tpt_improved_samples"] += statistics[target]["tpt_improved_samples"]
+        global_stat["tpt_worsened_samples"] += statistics[target]["tpt_worsened_samples"]
+        global_stat["n_samples"] += statistics[target]["n_samples"]
+
+    global_stat["ntpt_improved"] = len(global_stat["tpt_improved_samples"]) 
+    global_stat["ntpt_worsened"] =  len(global_stat["tpt_worsened_samples"]) 
+    writer.add_scalar("Samples-Global/NImproved", global_stat["ntpt_improved"])
+    writer.add_scalar("Samples-Global/NWorsened", global_stat["ntpt_worsened"])
+    writer.add_scalar("Samples-Global/ImprovedRatio", global_stat["ntpt_improved"]/global_stat["n_samples"] if global_stat["n_samples"]!=0 else 0 )
+    writer.add_scalar("Samples-Global/WorsenedRatio", global_stat["ntpt_worsened"]/global_stat["n_samples"] if global_stat["n_samples"]!=0 else 0 )
+
+    writer.add_text("statistics/perclass", json.dumps(statistics, indent=4))
+    writer.add_text("statistics/global", json.dumps(global_stat, indent=4))
+
+
+    final_accuracy_base = cumulative_accuracy_base / samples
+    final_accuracy_tpt = cumulative_accuracy_tpt / samples
+
+    writer.add_scalar("Accuracy/Final_Base", final_accuracy_base, 0)
+    writer.add_scalar("Accuracy/Final_TPT_coop", final_accuracy_tpt, 0)
+
+    writer.add_scalar("crossEntropy/Final_Base", cumulative_crossEntropy_base, 0)
+    writer.add_scalar("crossEntropy/Final_TPT_coop", cumulative_crossEntropy_tpt, 0)
+
+    return final_accuracy_tpt
 
 
 def generate_run_name(args):
     if args.save:
-        config_name = f"augmenter={args.augmenter}_loss={args.loss}_naug={args.n_aug}_npatch={args.n_patches}_augmix={args.augmix}_severity={args.severity}"
+        config_name = f"size={args.reduced_size if args.reduced_size else "Full"}_augmenter={args.augmenter}_loss={args.loss}_naug={args.n_aug}_npatch={args.n_patches}_augmix={args.augmix}_severity={args.severity}"
         return f"{args.run_name}_{config_name}" if args.run_name else f"{config_name}"
     else:
         return "tmp"
+
+
+### COMPATIBILITY (augmenter - loss)
+## AugmenterTPT - defaultTPT
 
 
 def parse_loss(args):
@@ -141,9 +237,10 @@ def parse_loss(args):
 def parse_augmenter(args):
     if args.augmenter == "AugmenterTPT":
         args.augmenter = AugmenterTPT(args.n_aug, args.augmix, args.severity)
+    elif args.augmenter == "PatchAugmenter":
+        args.augmenter = PatchAugmenter(args.n_aug, args.n_patches, args.severity)
     else:
         exit("Augmenter not valid")
-
 
 def main():
     args = parser.parse_args()
@@ -158,10 +255,12 @@ def main():
 
     classnames = ImageNetA.classnames
     dataset = ImageNetA(args.imagenet_a_path, transform=args.augmenter)
+    args.nclasses = len(classnames)
+    args.classnames = classnames
     dataloader = get_dataloader(
         dataset,
         args.batch_size,
-        shuffle=False,
+        shuffle=args.dataset_shuffle,
         reduced_size=args.reduced_size,
         num_workers=args.num_workers,
     )
@@ -258,6 +357,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--reduced_size", type=int, default=None, help="number of data sample"
+    )
+    parser.add_argument(
+        "--dataset_shuffle", type=bool, default=False, help="shuffle the dataset"
+    )
+    parser.add_argument(
+        "--save_imgs", type=bool, default=False, help="shuffle the dataset"
     )
 
     main()
