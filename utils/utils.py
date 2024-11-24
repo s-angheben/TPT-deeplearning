@@ -14,6 +14,7 @@ def set_random_seed(seed):
 class MetricsTracker:
     def __init__(self, args):
         self.samples = 0.0
+        self.changed = 0.0
     
         self.corrects_base = 0.0
         self.corrects_tpt = 0.0
@@ -90,6 +91,9 @@ class MetricsTracker:
             - pred_base_class.eq(target).sum().item()
         )
         writer.add_scalar("Samples/TPTimprovement", improvement, i)
+
+        self.changed += improvement
+        writer.add_scalar("Samples/TPTchanged", improvement, i)
 
         if improvement > 0:
             if args.save_imgs:
