@@ -116,7 +116,7 @@ def patch_loss(outputs, n_patches, patch_selection_p=0.9):
         '''
     
     # 1 Cross entropy loss between the original image and the weighted probability distribution 
-
+    '''
     all_selected_output = torch.stack(selected_outputs, dim=0)
     patch_entropy = torch.stack(patch_entropy, dim=0)
     patch_classes = select_most_frequent_class(all_selected_output) # Calculate the most frequent class for each patch
@@ -125,7 +125,7 @@ def patch_loss(outputs, n_patches, patch_selection_p=0.9):
     # Calculate the cross entropy loss between the original image and the target probability distribution
     log_probs = F.log_softmax(output_original_image, dim=-1)
     loss = -(target_distribution * log_probs).sum()
-
+    '''
 
     # 2 Cross entropy loss between the original image and the most frequent class
     '''
@@ -139,21 +139,22 @@ def patch_loss(outputs, n_patches, patch_selection_p=0.9):
     '''
     # 3 Give a weight to each patch based on its entropy
     '''
+    patch_entropy = torch.stack(patch_entropy, dim=0)
     epsilon = 1e-6
     weights = 1 / (patch_entropy + epsilon)
     weights /= weights.sum() #normalization
-    print("Weights", weights)
-    print("Entropy patches", patch_entropy)
-    print("Weights", weights)
+    #print("Weights", weights)
+    #print("Entropy patches", patch_entropy)
+    #print("Weights", weights)
     weighted_entropy = (patch_entropy * weights).sum()
-    print("Weighted entropy", weighted_entropy)
+    #print("Weighted entropy", weighted_entropy)
     
     loss = weighted_entropy
     '''
     # 4 Use the loss of the patch with the lowest entropy
-    '''
-    #loss = patch_entropy.min()
-    '''
+    patch_entropy = torch.stack(patch_entropy, dim=0)
+    loss = patch_entropy.min()
+    
     return loss
 
 
