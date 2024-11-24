@@ -10,7 +10,14 @@ BICUBIC = transforms.InterpolationMode.BICUBIC
 class IdentityTransform(torch.nn.Module):
     def forward(self, x):
         return x
+    
+class NormalizeImgTransform(torch.nn.Module):
+    def forward(self, x):
+        return x.float()/255.0
 
+
+def _convert_image_to_rgb(image):
+    return image.convert("RGB")
 
 # AugMix Transforms
 def get_base_transform():
@@ -18,19 +25,17 @@ def get_base_transform():
         [
             transforms.Resize(224, interpolation=BICUBIC),
             transforms.CenterCrop(224),
+            _convert_image_to_rgb,
+            transforms.PILToTensor(),
         ]
     )
 
 
-def _convert_image_to_rgb(image):
-    return image.convert("RGB")
 
-
-def get_preprocess():
+def get_normalizer():
     return transforms.Compose(
         [
-            _convert_image_to_rgb,
-            transforms.ToTensor(),
+            NormalizeImgTransform(),
             transforms.Normalize(
                 mean=[0.48145466, 0.4578275, 0.40821073],
                 std=[0.26862954, 0.26130258, 0.27577711],
@@ -41,8 +46,8 @@ def get_preprocess():
 
 def get_clip_preprocess():
     base_transform = get_base_transform()
-    preprocess = get_preprocess()
-    return transforms.Compose(base_transform.transforms + preprocess.transforms)
+    normalizer = get_normalizer()
+    return transforms.Compose(base_transform.transforms + normalizer.transforms)
 
 
 def get_preaugment():
@@ -50,6 +55,7 @@ def get_preaugment():
         [
             transforms.RandomResizedCrop(224),
             transforms.RandomHorizontalFlip(),
+            transforms.PILToTensor(),
         ]
     )
 
@@ -59,17 +65,17 @@ def get_preaugment():
 class AugmenterTPT(object):
     def __init__(self, n_aug=2, augmix=False, severity=1):
         self.n_aug = n_aug
-        self.base_transform = get_base_transform()
-        self.preprocess = get_preprocess()
+        self.clip_preprocess = get_clip_preprocess()
+        self.normalize = get_normalizer()
         self.preaugment = get_preaugment()
         self.augmix = (
             transforms.AugMix(severity=severity) if augmix else IdentityTransform()
         )
 
     def __call__(self, x):
-        image = self.preprocess(self.base_transform(x))
+        image = self.clip_preprocess(x)
         augmented = [
-            self.augmix(self.preprocess(self.preaugment(x))) for _ in range(self.n_aug)
+            self.normalize(self.augmix(self.preaugment(x))) for _ in range(self.n_aug)
         ]
         return [F.to_tensor(x)] + [image] + augmented
 
@@ -77,7 +83,10 @@ class AugmenterTPT(object):
 #################################################
 
 
-def crop_patches(image, clip_preprocess, n):
+def crop_patches(image, n, base_transform):
+    if n == 0:
+        return []
+    
     n = math.floor(math.sqrt(n))
     width, height = image.size
 
@@ -93,28 +102,33 @@ def crop_patches(image, clip_preprocess, n):
             lower = (i + 1) * part_height if i < n - 1 else height
 
             cropped_image = image.crop((left, upper, right, lower))
-            images.append(clip_preprocess(cropped_image))
+            images.append(base_transform(cropped_image))
 
     return images
 
 
 ## n_patches is the total number of patches
 class PatchAugmenter(object):
-    def __init__(self, n_aug=2, n_patches=16, severity=1):
+    def __init__(self, n_aug=2, n_patches=16, augmix=False, severity=1):
         self.n_aug = n_aug
         self.n_patches = n_patches
         self.clip_preprocess = get_clip_preprocess()
-        self.augmix = transforms.AugMix(severity=severity)
+        self.base_transform = get_base_transform()
+        self.normalize = get_normalizer()
+        self.augmix = (
+            transforms.AugMix(severity=severity) if augmix else IdentityTransform()
+        )
         self.crop_patches = crop_patches
 
     def __call__(self, x):
         img = self.clip_preprocess(x)
-        img_orig_aug = [self.augmix(img) for _ in range(self.n_aug)]
-        patches = self.crop_patches(x, self.clip_preprocess, self.n_patches)
+        img_orig_aug = [self.normalize(self.augmix(self.base_transform(x))) for _ in range(self.n_aug)]
+
+        patches = self.crop_patches(x, self.n_patches, self.base_transform)
         patches_augm = [
             augmented_patch
             for patch in patches
             for augmented_patch in [patch]
-            + [self.augmix(patch) for _ in range(self.n_aug)]
+            + [self.normalize(self.augmix(patch)) for _ in range(self.n_aug)]
         ]
-        return [img] + img_orig_aug + patches_augm
+        return [F.to_tensor(x)] + [img] + img_orig_aug + patches_augm
