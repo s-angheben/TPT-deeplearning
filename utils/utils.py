@@ -93,7 +93,7 @@ class MetricsTracker:
         writer.add_scalar("Samples/TPTimprovement", improvement, i)
 
         self.changed += improvement
-        writer.add_scalar("Samples/TPTchanged", improvement, i)
+        writer.add_scalar("Samples/TPTchanged", self.changed, i)
 
         if improvement > 0:
             if args.save_imgs:
