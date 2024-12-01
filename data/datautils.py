@@ -10,14 +10,16 @@ BICUBIC = transforms.InterpolationMode.BICUBIC
 class IdentityTransform(torch.nn.Module):
     def forward(self, x):
         return x
-    
+
+
 class NormalizeImgTransform(torch.nn.Module):
     def forward(self, x):
-        return x.float()/255.0
+        return x.float() / 255.0
 
 
 def _convert_image_to_rgb(image):
     return image.convert("RGB")
+
 
 # AugMix Transforms
 def get_base_transform():
@@ -29,7 +31,6 @@ def get_base_transform():
             transforms.PILToTensor(),
         ]
     )
-
 
 
 def get_normalizer():
@@ -86,7 +87,7 @@ class AugmenterTPT(object):
 def crop_patches(image, n, base_transform):
     if n == 0:
         return []
-    
+
     n = math.floor(math.sqrt(n))
     width, height = image.size
 
@@ -122,13 +123,16 @@ class PatchAugmenter(object):
 
     def __call__(self, x):
         img = self.clip_preprocess(x)
-        img_orig_aug = [self.normalize(self.augmix(self.base_transform(x))) for _ in range(self.n_aug)]
+        img_orig_aug = [
+            self.normalize(self.augmix(self.base_transform(x)))
+            for _ in range(self.n_aug)
+        ]
 
         patches = self.crop_patches(x, self.n_patches, self.base_transform)
         patches_augm = [
             augmented_patch
             for patch in patches
-            for augmented_patch in [patch]
+            for augmented_patch in [self.normalize(patch)]
             + [self.normalize(self.augmix(patch)) for _ in range(self.n_aug)]
         ]
         return [F.to_tensor(x)] + [img] + img_orig_aug + patches_augm

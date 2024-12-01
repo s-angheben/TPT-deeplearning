@@ -2,7 +2,14 @@ from data.dataloader import ImageNetA, get_dataloader
 from data.datautils import AugmenterTPT, PatchAugmenter
 from model.custom_clip import get_coop
 from utils.utils import set_random_seed, MetricsTracker
-from utils.losses import defaultTPT_loss, patch_loss1, patch_loss2, patch_loss3, patch_loss4
+from utils.losses import (
+    defaultTPT_loss,
+    patch_loss1,
+    patch_loss2,
+    patch_loss3,
+    patch_loss4,
+    patch_loss5,
+)
 
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
@@ -17,10 +24,12 @@ import sys
 
 
 def test_time_tuning(model, inputs, optimizer, scaler, args, tta_step=1):
+    loss_value = 0.0
     for _ in range(tta_step):
         with torch.cuda.amp.autocast():
             output = model(inputs)
             loss = args.loss(output, args)
+            loss_value = loss.item()
 
         optimizer.zero_grad()
         # compute gradient and do SGD step
@@ -29,7 +38,7 @@ def test_time_tuning(model, inputs, optimizer, scaler, args, tta_step=1):
         scaler.step(optimizer)
         scaler.update()
 
-    return
+    return loss_value
 
 
 def test_time_adapt_eval(
@@ -58,13 +67,16 @@ def test_time_adapt_eval(
             with torch.cuda.amp.autocast():
                 output_base = model(orig_img)
 
-        test_time_tuning(model, images, optimizer, scaler, args)
+        loss_value = test_time_tuning(model, images, optimizer, scaler, args)
+        print(loss_value)
 
         with torch.no_grad():
             with torch.cuda.amp.autocast():
                 output_tpt = model(orig_img)
 
-        metrics.update(i, view_img, output_base, output_tpt, target, writer, args)
+        metrics.update(
+            i, view_img, output_base, output_tpt, target, loss_value, writer, args
+        )
 
         progress_bar.set_postfix(
             {
@@ -80,7 +92,7 @@ def test_time_adapt_eval(
 
 def generate_run_name(args):
     if args.save:
-        config_name = f"size={args.reduced_size if args.reduced_size else "Full"}_augmenter={args.augmenter}_loss={args.loss}_naug={args.n_aug}_npatch={args.n_patches}_augmix={args.augmix}_severity={args.severity}_lr={args.learning_rate}_spall={args.selection_p_all}_sppat={args.selection_p_patch}"
+        config_name = f"size={args.reduced_size if args.reduced_size else 'Full'}_augmenter={args.augmenter}_loss={args.loss}_naug={args.n_aug}_npatch={args.n_patches}_augmix={args.augmix}_severity={args.severity}_lr={args.learning_rate}_spall={args.selection_p_all}_sppat={args.selection_p_patch}"
         return f"{args.run_name}_{config_name}" if args.run_name else f"{config_name}"
     else:
         return "tmp"
@@ -101,6 +113,8 @@ def parse_loss(args):
         args.loss = patch_loss3
     elif args.loss == "patch_loss4":
         args.loss = patch_loss4
+    elif args.loss == "patch_loss5":
+        args.loss = patch_loss5
     else:
         exit("Loss not valid")
 
@@ -109,7 +123,9 @@ def parse_augmenter(args):
     if args.augmenter == "AugmenterTPT":
         args.augmenter = AugmenterTPT(args.n_aug, args.augmix, args.severity)
     elif args.augmenter == "PatchAugmenter":
-        args.augmenter = PatchAugmenter(args.n_aug, args.n_patches, args.severity)
+        args.augmenter = PatchAugmenter(
+            args.n_aug, args.n_patches, args.augmix, args.severity
+        )
     else:
         exit("Augmenter not valid")
 
@@ -218,24 +234,51 @@ if __name__ == "__main__":
         "--run_name", type=str, default="", help="Custom name for TensorBoard run"
     )
     parser.add_argument(
-        "--augmenter", type=str, default="AugmenterTPT", help="Select the agumenter: AugmenterTPT, PatchAugmenter"
+        "--augmenter",
+        type=str,
+        default="AugmenterTPT",
+        help="Select the agumenter: AugmenterTPT, PatchAugmenter",
     )
     parser.add_argument(
-        "--loss", type=str, default="defaultTPT", help="Select the loss: defaultTPT, patch_loss1, patch_loss2, patch_loss3, patch_loss4"
+        "--loss",
+        type=str,
+        default="defaultTPT",
+        help="Select the loss: defaultTPT, patch_loss1, patch_loss2, patch_loss3, patch_loss4, patch_loss5",
     )
     parser.add_argument("--augmix", action="store_true", help="Enable augmix")
-    parser.add_argument("--no-augmix", action="store_false", dest="augmix", help="Disable augmix")
+    parser.add_argument(
+        "--no-augmix", action="store_false", dest="augmix", help="Disable augmix"
+    )
     parser.add_argument("--severity", type=int, default=1, help="Augmix severity")
     parser.add_argument("--num_workers", type=int, default=1, help="number of workers")
-    parser.add_argument("--save", action="store_true", help="Enable save to TensorBoard")
-    parser.add_argument("--no-save", action="store_false", dest="save", help="Disable save to TensorBoard")
+    parser.add_argument(
+        "--save", action="store_true", help="Enable save to TensorBoard"
+    )
+    parser.add_argument(
+        "--no-save",
+        action="store_false",
+        dest="save",
+        help="Disable save to TensorBoard",
+    )
     parser.add_argument(
         "--reduced_size", type=int, default=None, help="number of data sample"
     )
-    parser.add_argument("--dataset_shuffle", action="store_true", help="Shuffle the dataset")
-    parser.add_argument("--no-dataset_shuffle", action="store_false", dest="dataset_shuffle", help="Don't shuffle the dataset")
+    parser.add_argument(
+        "--dataset_shuffle", action="store_true", help="Shuffle the dataset"
+    )
+    parser.add_argument(
+        "--no-dataset_shuffle",
+        action="store_false",
+        dest="dataset_shuffle",
+        help="Don't shuffle the dataset",
+    )
     parser.add_argument("--save_imgs", action="store_true", help="Enable saving images")
-    parser.add_argument("--no-save_imgs", action="store_false", dest="save_imgs", help="Disable saving images")
+    parser.add_argument(
+        "--no-save_imgs",
+        action="store_false",
+        dest="save_imgs",
+        help="Disable saving images",
+    )
     parser.add_argument(
         "--selection_p_all", type=float, default=0.1, help="Learning rate"
     )

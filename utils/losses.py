@@ -203,3 +203,25 @@ def patch_loss4(outputs, args):
     loss = patch_entropy.min()
 
     return loss
+
+
+def patch_loss5(outputs, args):
+    epsilon = 1e-6
+
+    output_reshaped = reshape_output_patches(outputs, args)
+
+    mean_output_per_patch = output_reshaped.mean(dim=1)
+
+    mean_logprob_per_patch = mean_output_per_patch.log_softmax(dim=1)
+    entropy_per_patch = -(
+        mean_logprob_per_patch * torch.exp(mean_logprob_per_patch)
+    ).sum(dim=-1)
+
+    weighted_logprob_per_patch = mean_logprob_per_patch * (
+        1 / (entropy_per_patch.unsqueeze(dim=1) + epsilon)
+    )
+    logprob_output = weighted_logprob_per_patch.mean(dim=0).log_softmax(dim=0)
+
+    entropy_loss = -(logprob_output * torch.exp(logprob_output)).sum(dim=0)
+
+    return entropy_loss
