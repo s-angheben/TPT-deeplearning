@@ -95,3 +95,12 @@ python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss3 --
 python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss4 --n_aug=4 --n_patches=16 --augmix --num_workers=4
 ```
 
+- patches5: TPT + coop (augumentation = patches + augmix)
+```bash
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss5 --n_aug=4 --n_patches=16 --augmix --num_workers=4
+```
+
+- patches6: TPT + coop (augumentation = patches + augmix)
+```bash
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss6 --n_aug=2 --n_patches=32 --augmix --num_workers=4 --alpha_exponential_weightening=2
+```

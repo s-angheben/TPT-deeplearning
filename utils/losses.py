@@ -205,6 +205,15 @@ def patch_loss4(outputs, args):
     return loss
 
 
+"""
+compute the mean logit for each patch
+compute the entropy for each patch
+
+output prob is the weighted average of the prob of each patch
+weighted by the inverse of the corresponding entropy
+"""
+
+
 def patch_loss5(outputs, args):
     epsilon = 1e-6
 
@@ -220,8 +229,38 @@ def patch_loss5(outputs, args):
     weighted_logprob_per_patch = mean_logprob_per_patch * (
         1 / (entropy_per_patch.unsqueeze(dim=1) + epsilon)
     )
-    logprob_output = weighted_logprob_per_patch.mean(dim=0).log_softmax(dim=0)
 
+    logprob_output = weighted_logprob_per_patch.mean(dim=0).log_softmax(dim=0)
+    entropy_loss = -(logprob_output * torch.exp(logprob_output)).sum(dim=0)
+
+    return entropy_loss
+
+
+"""
+compute the mean logit for each patch
+compute the entropy for each patch
+
+output prob is the weighted average of the prob of each patch
+weighted exponentially by the corresponding entropy
+"""
+
+
+def patch_loss6(outputs, args):
+    alpha = args.alpha_exponential_weightening
+
+    output_reshaped = reshape_output_patches(outputs, args)
+
+    mean_output_per_patch = output_reshaped.mean(dim=1)
+
+    mean_logprob_per_patch = mean_output_per_patch.log_softmax(dim=1)
+    entropy_per_patch = -(
+        mean_logprob_per_patch * torch.exp(mean_logprob_per_patch)
+    ).sum(dim=-1)
+
+    exp_weights = torch.exp(-alpha * entropy_per_patch).unsqueeze(dim=1)
+    weighted_logprob_per_patch = mean_logprob_per_patch * exp_weights
+
+    logprob_output = weighted_logprob_per_patch.mean(dim=0).log_softmax(dim=0)
     entropy_loss = -(logprob_output * torch.exp(logprob_output)).sum(dim=0)
 
     return entropy_loss

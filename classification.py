@@ -9,6 +9,7 @@ from utils.losses import (
     patch_loss3,
     patch_loss4,
     patch_loss5,
+    patch_loss6,
 )
 
 import torch.backends.cudnn as cudnn
@@ -68,7 +69,6 @@ def test_time_adapt_eval(
                 output_base = model(orig_img)
 
         loss_value = test_time_tuning(model, images, optimizer, scaler, args)
-        print(loss_value)
 
         with torch.no_grad():
             with torch.cuda.amp.autocast():
@@ -115,6 +115,8 @@ def parse_loss(args):
         args.loss = patch_loss4
     elif args.loss == "patch_loss5":
         args.loss = patch_loss5
+    elif args.loss == "patch_loss6":
+        args.loss = patch_loss6
     else:
         exit("Loss not valid")
 
@@ -285,4 +287,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--selection_p_patch", type=float, default=0.9, help="Learning rate"
     )
+    parser.add_argument(
+        "--alpha_exponential_weightening",
+        type=float,
+        default=1.0,
+        help="alpha exponential weightening",
+    )
+
     main()
