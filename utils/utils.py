@@ -15,7 +15,7 @@ def set_random_seed(seed):
 class MetricsTracker:
     def __init__(self, args):
         self.samples = 0.0
-        self.changed = 0.0
+        self.cumulative_changed = 0.0
 
         self.corrects_base = 0.0
         self.corrects_tpt = 0.0
@@ -108,16 +108,16 @@ class MetricsTracker:
             i,
         )
 
-        improvement = (
+        change = (
             pred_tpt_class.eq(target).sum().item()
             - pred_base_class.eq(target).sum().item()
         )
-        writer.add_scalar("Samples/TPTimprovement", improvement, i)
+        writer.add_scalar("Samples/TPTchange", change, i)
 
-        self.changed += improvement
-        writer.add_scalar("Samples/TPTchanged", self.changed, i)
+        self.cumulative_changed += change
+        writer.add_scalar("Samples/TPTcumulative_changed", self.cumulative_changed, i)
 
-        if improvement > 0:
+        if change > 0:
             if args.save_imgs:
                 writer.add_image(
                     f"Improved_Images/img_{i}:{target_class}-{args.classnames[target_class]}",
@@ -126,7 +126,7 @@ class MetricsTracker:
                     i,
                 )
             self.sample_statistics[target]["tpt_improved_samples"].append(i)
-        elif improvement < 0:
+        elif change < 0:
             if args.save_imgs:
                 writer.add_image(
                     f"Worsened_Images/img_{i}:{target_class}-{args.classnames[target_class]}",
@@ -150,22 +150,25 @@ class MetricsTracker:
             self.sample_statistics[target]["ntpt_improved"] = ntpt_improved
             self.sample_statistics[target]["ntpt_worsened"] = ntpt_worsened
 
-            writer.add_scalar("Samples-PerClass/NImproved", ntpt_improved, target)
-            writer.add_scalar("Samples-PerClass/NWorsened", ntpt_worsened, target)
+            writer.add_scalar("Samples-PerClass-info/NImproved", ntpt_improved, target)
+            writer.add_scalar("Samples-PerClass-info/NWorsened", ntpt_worsened, target)
             writer.add_scalar(
-                "Samples-PerClass/Nsamples",
+                "Samples-PerClass/Changed", ntpt_improved - ntpt_worsened, target
+            )
+            writer.add_scalar(
+                "Samples-PerClass-info/Nsamples",
                 self.sample_statistics[target]["n_samples"],
                 target,
             )
             writer.add_scalar(
-                "Samples-PerClass/ImprovedRatio",
+                "Samples-PerClass-info/ImprovedRatio",
                 ntpt_improved / self.sample_statistics[target]["n_samples"]
                 if self.sample_statistics[target]["n_samples"] != 0
                 else 0,
                 target,
             )
             writer.add_scalar(
-                "Samples-PerClass/WorsenedRatio",
+                "Samples-PerClass-info/WorsenedRatio",
                 ntpt_worsened / self.sample_statistics[target]["n_samples"]
                 if self.sample_statistics[target]["n_samples"] != 0
                 else 0,

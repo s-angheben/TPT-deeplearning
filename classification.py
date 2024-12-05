@@ -4,6 +4,9 @@ from model.custom_clip import get_coop
 from utils.utils import set_random_seed, MetricsTracker
 from utils.losses import (
     defaultTPT_loss,
+    crossentropy_soft_loss,
+    crossentropy_hard1_loss,
+    crossentropy_hard5_loss,
     patch_loss1,
     patch_loss2,
     patch_loss3,
@@ -92,19 +95,24 @@ def test_time_adapt_eval(
 
 def generate_run_name(args):
     if args.save:
-        config_name = f"size={args.reduced_size if args.reduced_size else 'Full'}_augmenter={args.augmenter}_loss={args.loss}_naug={args.n_aug}_npatch={args.n_patches}_augmix={args.augmix}_severity={args.severity}_lr={args.learning_rate}_spall={args.selection_p_all}_sppat={args.selection_p_patch}"
+        config_name = f"size={args.reduced_size if args.reduced_size else 'Full'}_augmenter={args.augmenter}_loss={args.loss}_naug={args.n_aug}_npatch={args.n_patches}_overlap={args.overlap}_augmix={args.augmix}_severity={args.severity}_lr={args.learning_rate}_spall={args.selection_p_all}_sppat={args.selection_p_patch}"
         return f"{args.run_name}_{config_name}" if args.run_name else f"{config_name}"
     else:
         return "tmp"
 
-
-### COMPATIBILITY (augmenter - loss)
-## AugmenterTPT - defaultTPT, patch_loss1, patch_loss2, patch_loss3, patch_loss4
+    ### COMPATIBILITY (augmenter - loss)
+    ## AugmenterTPT - defaultTPT, patch_loss1, patch_loss2, patch_loss3, patch_loss4
 
 
 def parse_loss(args):
     if args.loss == "defaultTPT":
         args.loss = defaultTPT_loss
+    elif args.loss == "crossentropy_soft":
+        args.loss = crossentropy_soft_loss
+    elif args.loss == "crossentropy_hard1":
+        args.loss = crossentropy_hard1_loss
+    elif args.loss == "crossentropy_hard5":
+        args.loss = crossentropy_hard5_loss
     elif args.loss == "patch_loss1":
         args.loss = patch_loss1
     elif args.loss == "patch_loss2":
@@ -123,10 +131,16 @@ def parse_loss(args):
 
 def parse_augmenter(args):
     if args.augmenter == "AugmenterTPT":
-        args.augmenter = AugmenterTPT(args.n_aug, args.augmix, args.severity)
+        args.augmenter = AugmenterTPT(
+            n_aug=args.n_aug, augmix=args.augmix, severity=args.severity
+        )
     elif args.augmenter == "PatchAugmenter":
         args.augmenter = PatchAugmenter(
-            args.n_aug, args.n_patches, args.augmix, args.severity
+            n_aug=args.n_aug,
+            n_patches=args.n_patches,
+            overlap=args.overlap,
+            augmix=args.augmix,
+            severity=args.severity,
         )
     else:
         exit("Augmenter not valid")
@@ -286,6 +300,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--selection_p_patch", type=float, default=0.9, help="Learning rate"
+    )
+    parser.add_argument(
+        "--overlap", type=float, default=0.0, help="patch_augmenter overlap"
     )
     parser.add_argument(
         "--alpha_exponential_weightening",

@@ -48,7 +48,7 @@ options:
   --no-save_imgs        Disable saving images
 ```
 
-To run tensorboard:
+To run tensorboard:  :white_check_mark:
 ```bash
 tensorboard --logdir=runs
 ```
@@ -57,50 +57,90 @@ tensorboard --logdir=runs
 
 - base TPT + coop (augumentation = randomcrop)
 ```bash
-python classification.py --save --augmenter=AugmenterTPT --loss=defaultTPT --n_aug=63 --n_patches=0 --num_workers=4
+python classification.py --save --augmenter=AugmenterTPT --loss=defaultTPT --n_aug=63 --n_patches=0 --num_workers=12
 ```
 
 - base TPT + coop (augumentation = randomcrop + augmix)
 ```bash
-python classification.py --save --augmenter=AugmenterTPT --loss=defaultTPT --n_aug=63 --n_patches=0 --augmix --num_workers=4
+python classification.py --save --augmenter=AugmenterTPT --loss=defaultTPT --n_aug=63 --n_patches=0 --augmix --num_workers=12 --severity=2
 ```
 
 - simple patches: TPT + coop (augumentation = patches)
 ```bash
-python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=0 --n_patches=64 --num_workers=4
+python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=0 --n_patches=64 --num_workers=12
 ```
 
 - simple patches: TPT + coop (augumentation = patches + augmix)
 ```bash
-python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=4 --n_patches=16 --augmix --num_workers=4
+python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=4 --n_patches=16 --augmix --num_workers=12 --severity=2
 ```
 
 - patches1: TPT + coop (augumentation = patches + augmix)
 ```bash
-python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss1 --n_aug=4 --n_patches=16 --augmix --num_workers=4
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss1 --n_aug=4 --n_patches=16 --augmix --num_workers=12 --severity=2
 ```
 
 - patches2: TPT + coop (augumentation = patches + augmix)
 ```bash
-python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss2 --n_aug=4 --n_patches=16 --augmix --num_workers=4
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss2 --n_aug=4 --n_patches=16 --augmix --num_workers=12 --severity=2
 ```
 
 - patches3: TPT + coop (augumentation = patches + augmix)
 ```bash
-python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss3 --n_aug=4 --n_patches=16 --augmix --num_workers=4
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss3 --n_aug=4 --n_patches=16 --augmix --num_workers=12 --severity=2
 ```
 
 - patches4: TPT + coop (augumentation = patches + augmix)
 ```bash
-python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss4 --n_aug=4 --n_patches=16 --augmix --num_workers=4
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss4 --n_aug=4 --n_patches=16 --augmix --num_workers=12 --severity=2
 ```
 
-- patches5: TPT + coop (augumentation = patches + augmix)
+- patches4_2: TPT + coop (augumentation = patches + augmix)
 ```bash
-python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss5 --n_aug=4 --n_patches=16 --augmix --num_workers=4
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss4 --n_aug=2 --n_patches=32 --augmix --num_workers=12 --severity=2
+```
+
+- patches5: TPT + coop (augumentation = patches + augmix) 
+```bash
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss5 --n_aug=4 --n_patches=16 --augmix --num_workers=12 --severity=2
 ```
 
 - patches6: TPT + coop (augumentation = patches + augmix)
 ```bash
-python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss6 --n_aug=2 --n_patches=32 --augmix --num_workers=4 --alpha_exponential_weightening=2
+python classification.py --save --augmenter=PatchAugmenter --loss=patch_loss6 --n_aug=2 --n_patches=32 --augmix --num_workers=12 --alpha_exponential_weightening=2 --severity=2
+```
+
+- TPT + coop (augumentation = patches) (loss = crossentropy_hard1)
+```bash
+python classification.py --save --augmenter=AugmenterTPT --loss=crossentropy_hard1 --n_aug=63 --n_patches=0 --num_workers=12 
+```
+
+- TPT + coop (augumentation = patches) (loss = crossentropy_hard5)
+```bash
+python classification.py --save --augmenter=AugmenterTPT --loss=crossentropy_hard5 --n_aug=63 --n_patches=0 --num_workers=12 
+```
+
+- TPT + coop (augumentation = patches) (loss = crossentropy_soft)
+```bash
+python classification.py --save --augmenter=AugmenterTPT --loss=crossentropy_soft --n_aug=63 --n_patches=0 --num_workers=12 
+```
+
+- simple patches: TPT + coop (augumentation = patches 64 + overlap 0.20)
+```bash
+python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=0 --n_patches=64 --num_workers=12 --overlap=0.20
+```
+
+- simple patches: TPT + coop (augumentation = patches 64 + overlap 0.40)
+```bash
+python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=0 --n_patches=64 --num_workers=12 --overlap=0.40
+```
+
+- simple patches: TPT + coop (augumentation = patches 32 + overlap 0.20)
+```bash
+python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=2 --n_patches=32 --num_workers=12 --overlap=0.20 --severity=2
+```
+
+- simple patches: TPT + coop (augumentation = patches 32 + overlap 0.40)
+```bash
+python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=2 --n_patches=32 --num_workers=12 --overlap=0.40 --severity=2
 ```

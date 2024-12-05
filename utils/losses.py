@@ -28,6 +28,46 @@ def defaultTPT_loss(output, args):
     return avg_entropy(output)
 
 
+def crossentropy_soft_loss(output, args):
+    orig_img_output = output[0].softmax(dim=0)
+
+    best_outputs = select_confident_samples(output[1:], args.selection_p_all)
+    target_dist = best_outputs.mean(dim=0).softmax(dim=0)
+
+    loss = torch.nn.CrossEntropyLoss()(orig_img_output, target_dist)
+    return loss
+
+
+def crossentropy_hard1_loss(output, args):
+    orig_img_output = output[0].softmax(dim=0)
+
+    best_outputs = select_confident_samples(output[1:], args.selection_p_all)
+    best_mean = best_outputs.mean(dim=0)
+
+    max_idx = torch.argmax(best_mean)
+
+    target = torch.zeros_like(best_mean)
+    target[max_idx] = 1
+
+    loss = torch.nn.CrossEntropyLoss()(orig_img_output, target)
+    return loss
+
+
+def crossentropy_hard5_loss(output, args):
+    orig_img_output = output[0].softmax(dim=0)
+
+    best_outputs = select_confident_samples(output[1:], args.selection_p_all)
+    best_mean = best_outputs.mean(dim=0)
+
+    topk_values, topk_indices = torch.topk(best_mean, k=5)
+    filtered_dist = torch.zeros_like(best_mean)
+    filtered_dist[topk_indices] = topk_values
+    target = filtered_dist / filtered_dist.sum()
+
+    loss = torch.nn.CrossEntropyLoss()(orig_img_output, target)
+    return loss
+
+
 def reshape_output_patches(output, args):
     return output.view(-1, args.n_aug + 1, output.shape[-1])
 
@@ -168,11 +208,7 @@ def patch_loss3(outputs, args):
     epsilon = 1e-6
     weights = 1 / (patch_entropy + epsilon)
     weights /= weights.sum()  # normalization
-    print("Weights", weights)
-    print("Entropy patches", patch_entropy)
-    print("Weights", weights)
     weighted_entropy = (patch_entropy * weights).sum()
-    print("Weighted entropy", weighted_entropy)
 
     loss = weighted_entropy
 
