@@ -157,7 +157,7 @@ def main():
     parse_augmenter(args)
     parse_loss(args)
 
-    set_random_seed(1234)
+    set_random_seed(args.seed)
 
     classnames = ImageNetA.classnames
     dataset = ImageNetA(args.imagenet_a_path, transform=args.augmenter)
@@ -310,5 +310,7 @@ if __name__ == "__main__":
         default=1.0,
         help="alpha exponential weightening",
     )
+    parser.add_argument("--seed", type=int, default=1337, help="seed")
+
 
     main()
