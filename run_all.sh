@@ -16,3 +16,5 @@ python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n
 python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=0 --n_patches=64 --num_workers=12 --overlap=0.40;
 python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=2 --n_patches=32 --num_workers=12 --overlap=0.20 --severity=2;
 python classification.py --save --augmenter=PatchAugmenter --loss=defaultTPT --n_aug=2 --n_patches=32 --num_workers=12 --overlap=0.40 --severity=2;
+python classification.py --save --augmenter=PatchAugmenter --loss=crossentropy_hard5 --n_aug=0 --n_patches=64 --num_workers=12 --overlap=0.20
+
