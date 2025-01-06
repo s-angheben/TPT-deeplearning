@@ -5,3 +5,4 @@ utils/__pycache__/
 notebooks/.cache
 notebooks/.ipynb_checkpoints
 notebooks/runs/
+.DS_Store
